@@ -10,19 +10,30 @@ var sens = 0.00025
 var speed = 4.0
 var turn_speed = 10.0
 var gravity = 15
+var max_grab_time = 1.5
 var jump_force = 7.5
 var jumps_left = 2
 var max_jumps = 2
 var dive_force = 150.0
 var cam_tilt = 0.0
 var normal_fov = 75.0
-var dive_fov = 95.0
+var dive_fov = 100.0
 var dive_down_force = -1.0
 var slam_force = 30.0
 var hold_time = 0.0
+var grab_time = 0.0
+var slow_grab_time = 2
+var slow_slide_speed = 0.2
+var fast_slide_speed = 3.0
+var wall_jump_push = 15.0
+var regrab_lock_time = 3
+var regrab_lock_timer = 0.0
 var hold_required = 0.2
 var bounce_force = 12.0
 var cam_rot_x = 0.0
+var wall_normal = Vector3.ZERO
+var grab_position = Vector3.ZERO
+var last_wall_jump_normal = Vector3.ZERO
 var is_holding_shift = false
 var just_slammed = false
 var was_in_air = false
@@ -33,24 +44,32 @@ var is_diving = false
 var is_grabbing = false
 var can_dive = true
 
-var grab_position = Vector3.ZERO
-
 func _ready():
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 	floor_max_angle = deg_to_rad(45.0)
 	floor_stop_on_slope = false
 
 func _physics_process(delta):
+	if regrab_lock_timer > 0.0:
+		regrab_lock_timer -= delta
+	
 	if is_grabbing:
-		velocity = Vector3.ZERO
+		grab_time += delta
+
+		var slide_speed = slow_slide_speed
+		if grab_time >= slow_grab_time:
+			slide_speed = fast_slide_speed
+
+		grab_position.y -= slide_speed * delta
 		global_position = grab_position
+		velocity = Vector3.ZERO
 		move_and_slide()
 		return
-	
+
 	var dir = Vector3.ZERO
 	var target_fov = normal_fov
 	var target_tilt = 0.0
-	
+
 	if is_diving:
 		velocity.x *= 0.98
 		velocity.z *= 0.98
@@ -65,10 +84,15 @@ func _physics_process(delta):
 
 	cam_tilt = lerp(cam_tilt, target_tilt, 0.1)
 	
-	if not is_on_floor() and not is_grabbing:
-		if $FrontRay.is_colliding():
-			if not $TopRay.is_colliding():
+	if not is_on_floor() and not is_grabbing and velocity.y < 0:
+		if $FrontRay.is_colliding() and not $TopRay.is_colliding():
+			var current_wall_normal = $FrontRay.get_collision_normal()
+
+			var same_wall = current_wall_normal.dot(last_wall_jump_normal) > 0.9
+
+			if regrab_lock_timer <= 0.0 or not same_wall:
 				start_grab()
+
 
 	# movimento WASD
 	if Input.is_action_pressed("w"):
@@ -146,10 +170,20 @@ func _physics_process(delta):
 	move_and_slide()
 
 func start_grab():
-	print("GRAB ATIVOU")
+	if is_grabbing:
+		return
+
 	is_grabbing = true
+	is_diving = false
+	did_slam = false
 	velocity = Vector3.ZERO
-	grab_position = global_position
+	grab_time = 0.0
+
+	var wall_point = $FrontRay.get_collision_point()
+	wall_normal = $FrontRay.get_collision_normal()
+
+	grab_position = wall_point + wall_normal * 0.45
+	grab_position.y -= 0.8
 
 func _input(event):
 	if event is InputEventKey:
@@ -185,11 +219,19 @@ func _input(event):
 		camera.rotation.x = cam_rot_x + cam_tilt
 	
 	if is_grabbing:
-		if Input.is_action_just_pressed("ui_accept"):
+		if event.is_action_pressed("ui_accept"):
 			is_grabbing = false
+			regrab_lock_timer = regrab_lock_time
+			last_wall_jump_normal = wall_normal
+
+			var jump_dir = wall_normal
+			jump_dir.y = 0.0
+			jump_dir = jump_dir.normalized()
+
+			velocity = jump_dir * wall_jump_push
 			velocity.y = jump_force
 
-		if Input.is_action_just_pressed("s"):
+		if event.is_action_pressed("s"):
 			is_grabbing = false
-			velocity.y = -2.0  # cair
-	
+			regrab_lock_timer = regrab_lock_time
+			velocity.y = -2.0
