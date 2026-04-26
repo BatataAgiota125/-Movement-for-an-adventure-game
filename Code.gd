@@ -1,3 +1,7 @@
+# By BatataAgiota125
+# Code made with help of AI
+# Licensed under MIT License
+
 extends CharacterBody3D
 
 @onready var camera = $Camera3D
